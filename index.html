@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ArenTrade</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <style>
+    :root {
+      --bg:#f8fafc;
+      --card:#fff;
+      --text:#0f172a;
+      --muted:#64748b;
+      --border:#e2e8f0;
+      --green:#16a34a;
+      --red:#dc2626;
+      --blue:#2563eb;
+    }
+
+    body.dark{
+      --bg:#0f172a;
+      --card:#1e293b;
+      --text:#fff;
+      --muted:#94a3b8;
+      --border:#334155;
+    }
+
+    body{
+      margin:0;
+      font-family:Arial;
+      background:var(--bg);
+      color:var(--text);
+      padding:15px;
+    }
+
+    h1{margin:0}
+
+    .topbar{
+      display:flex;
+      justify-content:space-between;
+      margin-bottom:15px;
+    }
+
+    .btn{
+      padding:6px 10px;
+      border:1px solid var(--border);
+      border-radius:8px;
+      cursor:pointer;
+      background:var(--card);
+    }
+
+    .grid{
+      display:grid;
+      grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+      gap:10px;
+      margin-bottom:15px;
+    }
+
+    .card{
+      background:var(--card);
+      border:1px solid var(--border);
+      padding:12px;
+      border-radius:12px;
+    }
+
+    .label{font-size:11px;color:var(--muted)}
+    .value{font-size:20px;font-weight:bold}
+
+    .green{color:var(--green)}
+    .red{color:var(--red)}
+
+    canvas{width:100%}
+
+    .table{
+      width:100%;
+      border-collapse:collapse;
+      font-size:13px;
+    }
+
+    .table th,.table td{
+      padding:8px;
+      border-bottom:1px solid var(--border);
+    }
+
+    .badge{
+      padding:2px 6px;
+      border-radius:6px;
+      font-size:11px;
+    }
+
+    .buy{background:#22c55e22}
+    .sell{background:#ef444422}
+  </style>
+</head>
+
+<body>
+
+<div class="topbar">
+  <h1>ArenTrade</h1>
+  <div class="btn" onclick="toggleTheme()">Theme</div>
+</div>
+
+<!-- MAIN STATS -->
+<div class="grid">
+  <div class="card"><div class="label">Login</div><div id="login" class="value"></div></div>
+  <div class="card"><div class="label">Balance</div><div id="balance" class="value"></div></div>
+  <div class="card"><div class="label">Equity</div><div id="equity" class="value"></div></div>
+  <div class="card"><div class="label">Status</div><div id="status" class="value"></div></div>
+</div>
+
+<!-- TODAY STATS -->
+<div class="grid">
+  <div class="card"><div class="label">Today Profit</div><div id="todayProfit" class="value"></div></div>
+  <div class="card"><div class="label">Today Deposit</div><div id="todayDeposit" class="value"></div></div>
+  <div class="card"><div class="label">Floating PnL</div><div id="floating" class="value"></div></div>
+</div>
+
+<!-- CHART -->
+<div class="card">
+  <div class="label">Balance vs Equity</div>
+  <canvas id="chart"></canvas>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <div class="label">Daily Profit</div>
+    <canvas id="profitChart"></canvas>
+  </div>
+
+  <div class="card">
+    <div class="label">Daily Deposit</div>
+    <canvas id="depositChart"></canvas>
+  </div>
+</div>
+
+<!-- POSITIONS -->
+<div class="card">
+  <div class="label">Open Positions</div>
+  <table class="table" id="positions"></table>
+</div>
+
+<script>
+
+function toggleTheme(){
+  document.body.classList.toggle("dark")
+}
+
+function fmt(v){
+  if(!v && v!==0) return "-"
+  return Number(v).toLocaleString(undefined,{minimumFractionDigits:2})
+}
+
+function drawDual(history){
+  const c=document.getElementById('chart')
+  const ctx=c.getContext('2d')
+  const w=c.width=c.offsetWidth
+  const h=c.height=150
+
+  ctx.clearRect(0,0,w,h)
+
+  if(!history || history.length<2) return
+
+  let bal=history.map(x=>x.balance)
+  let eq=history.map(x=>x.equity)
+
+  let min=Math.min(...bal,...eq)
+  let max=Math.max(...bal,...eq)
+
+  function draw(data,color){
+    ctx.beginPath()
+    data.forEach((v,i)=>{
+      let x=i/(data.length-1)*w
+      let y=10+(h-20)*(1-(v-min)/(max-min||1))
+      if(i===0)ctx.moveTo(x,y)
+      else ctx.lineTo(x,y)
+    })
+    ctx.strokeStyle=color
+    ctx.lineWidth=2
+    ctx.stroke()
+  }
+
+  draw(bal,"#3b82f6")
+  draw(eq,"#22c55e")
+}
+
+function groupDaily(history){
+  let map={}
+  history?.forEach(h=>{
+    let d=new Date(h.time*1000).toDateString()
+    if(!map[d]) map[d]=[]
+    map[d].push(h)
+  })
+
+  let res=[]
+  for(let d in map){
+    let arr=map[d]
+    let profit=arr[arr.length-1].balance - arr[0].balance
+    res.push({value:profit})
+  }
+  return res
+}
+
+function groupDeposit(dep){
+  let map={}
+  dep?.forEach(d=>{
+    let day=new Date(d.time*1000).toDateString()
+    if(!map[day]) map[day]=0
+    map[day]+=d.amount
+  })
+
+  let res=[]
+  for(let k in map) res.push({value:map[k]})
+  return res
+}
+
+function drawBar(id,data){
+  const c=document.getElementById(id)
+  const ctx=c.getContext('2d')
+  const w=c.width=c.offsetWidth
+  const h=c.height=120
+
+  ctx.clearRect(0,0,w,h)
+
+  if(!data.length) return
+
+  let max=Math.max(...data.map(x=>Math.abs(x.value)))
+
+  data.forEach((d,i)=>{
+    let x=i*(w/data.length)
+    let val=d.value
+    let bh=(h-20)*(Math.abs(val)/(max||1))
+
+    ctx.fillStyle=val>=0?"#22c55e":"#ef4444"
+    ctx.fillRect(x,h-bh,(w/data.length)-5,bh)
+  })
+}
+
+async function load(){
+  const res=await fetch('/data')
+  const d=await res.json()
+
+  document.getElementById('login').innerText=d.login||'-'
+  document.getElementById('balance').innerText=fmt(d.balance)
+  document.getElementById('equity').innerText=fmt(d.equity)
+
+  // status
+  let st=document.getElementById('status')
+  let now=Date.now()/1000
+  if(now-d.last_seen < 5){
+    st.innerText="ONLINE"
+    st.className="value green"
+  }else{
+    st.innerText="OFFLINE"
+    st.className="value red"
+  }
+
+  // positions
+  let total=0
+  let html="<tr><th>Symbol</th><th>Type</th><th>Lot</th><th>PnL</th></tr>"
+  d.positions?.forEach(p=>{
+    total+=Number(p.profit)
+    html+=`
+      <tr>
+        <td>${p.symbol}</td>
+        <td><span class="badge ${p.type=='BUY'?'buy':'sell'}">${p.type}</span></td>
+        <td>${p.volume}</td>
+        <td class="${p.profit>=0?'green':'red'}">${fmt(p.profit)}</td>
+      </tr>`
+  })
+  html+=`<tr><td colspan=3>Total</td><td>${fmt(total)}</td></tr>`
+  document.getElementById('positions').innerHTML=html
+
+  // stats
+  document.getElementById('floating').innerText=fmt(total)
+
+  let daily=groupDaily(d.history)
+  let dep=groupDeposit(d.deposits)
+
+  let todayP = daily.length? daily[daily.length-1].value : 0
+  let todayD = dep.length? dep[dep.length-1].value : 0
+
+  document.getElementById('todayProfit').innerText=fmt(todayP)
+  document.getElementById('todayDeposit').innerText=fmt(todayD)
+
+  // charts
+  drawDual(d.history)
+  drawBar("profitChart",daily)
+  drawBar("depositChart",dep)
+}
+
+setInterval(load,2000)
+load()
+
+</script>
+
+</body>
+</html>
