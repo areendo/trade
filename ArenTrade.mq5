@@ -1,85 +1,150 @@
-#include <Trade\Trade.mqh>
+#property strict
 
-string url = "http://43.133.148.183/update";
+string url = "http://127.0.0.1/update";
 
-void SendData()
+// escape string biar JSON aman
+string EscapeJSONString(string s)
 {
-   string json = "{";
+   StringReplace(s, "\\", "\\\\");
+   StringReplace(s, "\"", "\\\"");
+   StringReplace(s, "\r", "");
+   StringReplace(s, "\n", " ");
+   return s;
+}
 
-   // ACCOUNT
-   json += "\"login\":" + IntegerToString((int)AccountInfoInteger(ACCOUNT_LOGIN)) + ",";
-   json += "\"balance\":" + DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE),2) + ",";
-   json += "\"equity\":" + DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY),2) + ",";
+// ================= POSITIONS =================
+string GetPositionsJSON()
+{
+   string json = "[";
+   int written = 0;
 
-   // POSITIONS
-   json += "\"positions\":[";
-   int totalPos = PositionsTotal();
+   int total = PositionsTotal();
 
-   for(int i=0;i<totalPos;i++)
+   for(int i = 0; i < total; i++)
    {
       ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
 
-      if(PositionSelectByTicket(ticket))
-      {
-         json += "{";
-         json += "\"ticket\":" + IntegerToString(ticket) + ",";
-         json += "\"symbol\":\"" + PositionGetString(POSITION_SYMBOL) + "\",";
-         json += "\"type\":\"" + (PositionGetInteger(POSITION_TYPE)==0?"BUY":"SELL") + "\",";
-         json += "\"volume\":" + DoubleToString(PositionGetDouble(POSITION_VOLUME),2) + ",";
-         json += "\"open_price\":" + DoubleToString(PositionGetDouble(POSITION_PRICE_OPEN),5) + ",";
-         json += "\"profit\":" + DoubleToString(PositionGetDouble(POSITION_PROFIT),2);
-         json += "}";
+      if(!PositionSelectByTicket(ticket)) continue;
 
-         if(i < totalPos-1) json += ",";
-      }
+      if(written > 0) json += ",";
+
+      ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+
+      string typeStr = (type == POSITION_TYPE_BUY) ? "BUY" : "SELL";
+
+      string symbol = EscapeJSONString(PositionGetString(POSITION_SYMBOL));
+      double volume = PositionGetDouble(POSITION_VOLUME);
+      double open   = PositionGetDouble(POSITION_PRICE_OPEN);
+      double profit = PositionGetDouble(POSITION_PROFIT);
+
+      json += "{";
+      json += "\"ticket\":" + IntegerToString((int)ticket) + ",";
+      json += "\"symbol\":\"" + symbol + "\",";
+      json += "\"type\":\"" + typeStr + "\",";
+      json += "\"volume\":" + DoubleToString(volume,2) + ",";
+      json += "\"open_price\":" + DoubleToString(open,5) + ",";
+      json += "\"profit\":" + DoubleToString(profit,2);
+      json += "}";
+
+      written++;
    }
-   json += "],";
 
-   // ORDERS
-   json += "\"orders\":[";
-   int totalOrd = OrdersTotal();
-
-   for(int i=0;i<totalOrd;i++)
-   {
-      if(OrderSelect(i, SELECT_BY_POS))
-      {
-         json += "{";
-         json += "\"ticket\":" + IntegerToString(OrderGetInteger(ORDER_TICKET)) + ",";
-         json += "\"symbol\":\"" + OrderGetString(ORDER_SYMBOL) + "\",";
-         json += "\"type\":\"" + EnumToString((ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE)) + "\",";
-         json += "\"volume\":" + DoubleToString(OrderGetDouble(ORDER_VOLUME_CURRENT),2) + ",";
-         json += "\"price\":" + DoubleToString(OrderGetDouble(ORDER_PRICE_OPEN),5);
-         json += "}";
-
-         if(i < totalOrd-1) json += ",";
-      }
-   }
    json += "]";
+   return json;
+}
 
+// ================= DEPOSIT (DEAL_TYPE_BALANCE) =================
+string GetDepositsJSON()
+{
+   string json = "[";
+   int written = 0;
+
+   datetime from = TimeCurrent() - 86400 * 30; // 30 hari
+   datetime to   = TimeCurrent();
+
+   if(!HistorySelect(from, to))
+      return "[]";
+
+   int deals = HistoryDealsTotal();
+
+   for(int i = 0; i < deals; i++)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket == 0) continue;
+
+      long type = HistoryDealGetInteger(ticket, DEAL_TYPE);
+
+      if(type == DEAL_TYPE_BALANCE)
+      {
+         if(written > 0) json += ",";
+
+         datetime t = (datetime)HistoryDealGetInteger(ticket, DEAL_TIME);
+         double amount = HistoryDealGetDouble(ticket, DEAL_PROFIT);
+
+         json += "{";
+         json += "\"time\":" + IntegerToString((int)t) + ",";
+         json += "\"amount\":" + DoubleToString(amount,2);
+         json += "}";
+
+         written++;
+      }
+   }
+
+   json += "]";
+   return json;
+}
+
+// ================= SEND DATA =================
+void SendData()
+{
+   long login   = AccountInfoInteger(ACCOUNT_LOGIN);
+   double bal   = AccountInfoDouble(ACCOUNT_BALANCE);
+   double eq    = AccountInfoDouble(ACCOUNT_EQUITY);
+
+   string json = "{";
+   json += "\"login\":" + IntegerToString((int)login) + ",";
+   json += "\"balance\":" + DoubleToString(bal,2) + ",";
+   json += "\"equity\":" + DoubleToString(eq,2) + ",";
+   json += "\"positions\":" + GetPositionsJSON() + ",";
+   json += "\"deposits\":" + GetDepositsJSON();
    json += "}";
 
-   char result[];
    char post[];
-   StringToCharArray(json, post);
+   char result[];
+   string result_headers;
+
+   StringToCharArray(json, post, 0, StringLen(json));
 
    string headers = "Content-Type: application/json\r\n";
+   int timeout = 5000;
 
-   int res = WebRequest("POST", url, headers, 5000, post, result, headers);
+   ResetLastError();
+   int res = WebRequest("POST", url, headers, timeout, post, result, result_headers);
 
    if(res == -1)
    {
-      Print("WebRequest Error: ", GetLastError());
+      Print("ArenTrade ERROR: ", GetLastError());
+   }
+   else
+   {
+      Print("ArenTrade OK: ", res);
    }
 }
 
-void OnTick()
+// ================= TIMER =================
+int OnInit()
 {
-   static datetime last = 0;
+   EventSetTimer(2); // kirim tiap 2 detik
+   return(INIT_SUCCEEDED);
+}
 
-   if(TimeCurrent() - last < 2)
-      return;
+void OnDeinit(const int reason)
+{
+   EventKillTimer();
+}
 
-   last = TimeCurrent();
-
+void OnTimer()
+{
    SendData();
 }
