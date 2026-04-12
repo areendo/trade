@@ -4,6 +4,8 @@
   <title>ArenTrade</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
   <style>
     :root {
       --bg:#f8fafc;
@@ -26,49 +28,65 @@
 
     body{
       margin:0;
-      font-family:Arial;
+      font-family:Inter,Arial;
       background:var(--bg);
       color:var(--text);
       padding:15px;
     }
 
-    h1{margin:0}
-
     .topbar{
       display:flex;
       justify-content:space-between;
+      align-items:center;
       margin-bottom:15px;
     }
 
+    h1{margin:0;font-size:20px}
+
     .btn{
-      padding:6px 10px;
+      padding:8px 12px;
       border:1px solid var(--border);
-      border-radius:8px;
+      border-radius:10px;
       cursor:pointer;
       background:var(--card);
     }
 
     .grid{
       display:grid;
-      grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
-      gap:10px;
+      grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+      gap:12px;
       margin-bottom:15px;
     }
 
     .card{
       background:var(--card);
       border:1px solid var(--border);
-      padding:12px;
-      border-radius:12px;
+      padding:14px;
+      border-radius:14px;
+      box-shadow:0 4px 12px rgba(0,0,0,0.04);
     }
 
     .label{font-size:11px;color:var(--muted)}
-    .value{font-size:20px;font-weight:bold}
+    .value{font-size:20px;font-weight:bold;margin-top:4px}
 
     .green{color:var(--green)}
     .red{color:var(--red)}
 
-    canvas{width:100%}
+    /* CHART FIX */
+    .charts{
+      grid-template-columns:repeat(auto-fit,minmax(250px,1fr));
+    }
+
+    canvas{
+      width:100%;
+      height:160px !important;
+    }
+
+    @media(max-width:600px){
+      canvas{
+        height:140px !important;
+      }
+    }
 
     .table{
       width:100%;
@@ -77,12 +95,12 @@
     }
 
     .table th,.table td{
-      padding:8px;
+      padding:10px;
       border-bottom:1px solid var(--border);
     }
 
     .badge{
-      padding:2px 6px;
+      padding:3px 8px;
       border-radius:6px;
       font-size:11px;
     }
@@ -99,7 +117,6 @@
   <div class="btn" onclick="toggleTheme()">Theme</div>
 </div>
 
-<!-- MAIN STATS -->
 <div class="grid">
   <div class="card"><div class="label">Login</div><div id="login" class="value"></div></div>
   <div class="card"><div class="label">Balance</div><div id="balance" class="value"></div></div>
@@ -107,20 +124,19 @@
   <div class="card"><div class="label">Status</div><div id="status" class="value"></div></div>
 </div>
 
-<!-- TODAY STATS -->
 <div class="grid">
   <div class="card"><div class="label">Today Profit</div><div id="todayProfit" class="value"></div></div>
   <div class="card"><div class="label">Today Deposit</div><div id="todayDeposit" class="value"></div></div>
   <div class="card"><div class="label">Floating PnL</div><div id="floating" class="value"></div></div>
 </div>
 
-<!-- CHART -->
-<div class="card">
-  <div class="label">Balance vs Equity</div>
-  <canvas id="chart"></canvas>
-</div>
+<!-- 3 CHART SEJAJAR -->
+<div class="grid charts">
+  <div class="card">
+    <div class="label">Balance vs Equity</div>
+    <canvas id="chart"></canvas>
+  </div>
 
-<div class="grid">
   <div class="card">
     <div class="label">Daily Profit</div>
     <canvas id="profitChart"></canvas>
@@ -132,13 +148,14 @@
   </div>
 </div>
 
-<!-- POSITIONS -->
 <div class="card">
   <div class="label">Open Positions</div>
   <table class="table" id="positions"></table>
 </div>
 
 <script>
+
+let mainChart, profitChart, depositChart
 
 function toggleTheme(){
   document.body.classList.toggle("dark")
@@ -149,39 +166,6 @@ function fmt(v){
   return Number(v).toLocaleString(undefined,{minimumFractionDigits:2})
 }
 
-function drawDual(history){
-  const c=document.getElementById('chart')
-  const ctx=c.getContext('2d')
-  const w=c.width=c.offsetWidth
-  const h=c.height=150
-
-  ctx.clearRect(0,0,w,h)
-
-  if(!history || history.length<2) return
-
-  let bal=history.map(x=>x.balance)
-  let eq=history.map(x=>x.equity)
-
-  let min=Math.min(...bal,...eq)
-  let max=Math.max(...bal,...eq)
-
-  function draw(data,color){
-    ctx.beginPath()
-    data.forEach((v,i)=>{
-      let x=i/(data.length-1)*w
-      let y=10+(h-20)*(1-(v-min)/(max-min||1))
-      if(i===0)ctx.moveTo(x,y)
-      else ctx.lineTo(x,y)
-    })
-    ctx.strokeStyle=color
-    ctx.lineWidth=2
-    ctx.stroke()
-  }
-
-  draw(bal,"#3b82f6")
-  draw(eq,"#22c55e")
-}
-
 function groupDaily(history){
   let map={}
   history?.forEach(h=>{
@@ -189,14 +173,7 @@ function groupDaily(history){
     if(!map[d]) map[d]=[]
     map[d].push(h)
   })
-
-  let res=[]
-  for(let d in map){
-    let arr=map[d]
-    let profit=arr[arr.length-1].balance - arr[0].balance
-    res.push({value:profit})
-  }
-  return res
+  return Object.values(map).map(arr=>({value:arr[arr.length-1].balance - arr[0].balance}))
 }
 
 function groupDeposit(dep){
@@ -206,31 +183,29 @@ function groupDeposit(dep){
     if(!map[day]) map[day]=0
     map[day]+=d.amount
   })
-
-  let res=[]
-  for(let k in map) res.push({value:map[k]})
-  return res
+  return Object.values(map).map(v=>({value:v}))
 }
 
-function drawBar(id,data){
-  const c=document.getElementById(id)
-  const ctx=c.getContext('2d')
-  const w=c.width=c.offsetWidth
-  const h=c.height=120
+function initCharts(){
+  mainChart = new Chart(document.getElementById("chart"),{
+    type:"line",
+    data:{labels:[],datasets:[
+      {label:"Balance",data:[],borderColor:"#3b82f6",tension:.3},
+      {label:"Equity",data:[],borderColor:"#22c55e",tension:.3}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,animation:false}
+  })
 
-  ctx.clearRect(0,0,w,h)
+  profitChart = new Chart(document.getElementById("profitChart"),{
+    type:"bar",
+    data:{labels:[],datasets:[{data:[],backgroundColor:"#22c55e"}]},
+    options:{responsive:true,maintainAspectRatio:false,animation:false}
+  })
 
-  if(!data.length) return
-
-  let max=Math.max(...data.map(x=>Math.abs(x.value)))
-
-  data.forEach((d,i)=>{
-    let x=i*(w/data.length)
-    let val=d.value
-    let bh=(h-20)*(Math.abs(val)/(max||1))
-
-    ctx.fillStyle=val>=0?"#22c55e":"#ef4444"
-    ctx.fillRect(x,h-bh,(w/data.length)-5,bh)
+  depositChart = new Chart(document.getElementById("depositChart"),{
+    type:"bar",
+    data:{labels:[],datasets:[{data:[],backgroundColor:"#3b82f6"}]},
+    options:{responsive:true,maintainAspectRatio:false,animation:false}
   })
 }
 
@@ -242,7 +217,6 @@ async function load(){
   document.getElementById('balance').innerText=fmt(d.balance)
   document.getElementById('equity').innerText=fmt(d.equity)
 
-  // status
   let st=document.getElementById('status')
   let now=Date.now()/1000
   if(now-d.last_seen < 5){
@@ -253,23 +227,21 @@ async function load(){
     st.className="value red"
   }
 
-  // positions
   let total=0
   let html="<tr><th>Symbol</th><th>Type</th><th>Lot</th><th>PnL</th></tr>"
   d.positions?.forEach(p=>{
     total+=Number(p.profit)
     html+=`
-      <tr>
-        <td>${p.symbol}</td>
-        <td><span class="badge ${p.type=='BUY'?'buy':'sell'}">${p.type}</span></td>
-        <td>${p.volume}</td>
-        <td class="${p.profit>=0?'green':'red'}">${fmt(p.profit)}</td>
-      </tr>`
+    <tr>
+      <td>${p.symbol}</td>
+      <td><span class="badge ${p.type=='BUY'?'buy':'sell'}">${p.type}</span></td>
+      <td>${p.volume}</td>
+      <td class="${p.profit>=0?'green':'red'}">${fmt(p.profit)}</td>
+    </tr>`
   })
   html+=`<tr><td colspan=3>Total</td><td>${fmt(total)}</td></tr>`
   document.getElementById('positions').innerHTML=html
 
-  // stats
   document.getElementById('floating').innerText=fmt(total)
 
   let daily=groupDaily(d.history)
@@ -281,12 +253,21 @@ async function load(){
   document.getElementById('todayProfit').innerText=fmt(todayP)
   document.getElementById('todayDeposit').innerText=fmt(todayD)
 
-  // charts
-  drawDual(d.history)
-  drawBar("profitChart",daily)
-  drawBar("depositChart",dep)
+  mainChart.data.labels = d.history.map((_,i)=>i)
+  mainChart.data.datasets[0].data = d.history.map(x=>x.balance)
+  mainChart.data.datasets[1].data = d.history.map(x=>x.equity)
+  mainChart.update()
+
+  profitChart.data.labels = daily.map((_,i)=>i)
+  profitChart.data.datasets[0].data = daily.map(x=>x.value)
+  profitChart.update()
+
+  depositChart.data.labels = dep.map((_,i)=>i)
+  depositChart.data.datasets[0].data = dep.map(x=>x.value)
+  depositChart.update()
 }
 
+initCharts()
 setInterval(load,2000)
 load()
 
